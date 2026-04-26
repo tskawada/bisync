@@ -1,0 +1,86 @@
+syntax = "proto3";
+package bisync;
+
+option go_package = "github.com/tskawada/bisync/internal/grpc";
+
+service BisyncService {
+  // Fetch unsynced changelog entries from the peer.
+  rpc ExchangeChangelog(ChangelogRequest) returns (ChangelogResponse);
+
+  // Notify the peer that a file transfer completed successfully.
+  rpc AckTransfer(AckRequest) returns (AckResponse);
+
+  // Instruct the peer to delete a file.
+  rpc DeleteFile(DeleteRequest) returns (DeleteResponse);
+
+  // Instruct the peer to rename a file.
+  rpc RenameFile(RenameRequest) returns (RenameResponse);
+
+  // Health check.
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message ChangelogEntry {
+  int64  id            = 1;
+  string sync_pair     = 2;
+  string path          = 3;
+  string event_type    = 4;
+  string rename_to     = 5;
+  int64  file_size     = 6;
+  int64  file_mtime    = 7;
+  uint32 file_mode     = 8;
+  bool   is_dir        = 9;
+  string hlc_timestamp = 10;
+  string node_name     = 11;
+}
+
+message ChangelogRequest {
+  string sync_pair = 1;
+  string since_hlc = 2;
+}
+
+message ChangelogResponse {
+  repeated ChangelogEntry entries = 1;
+  string current_hlc = 2;
+}
+
+message AckRequest {
+  repeated int64 entry_ids = 1;
+  string node_name = 2;
+}
+
+message AckResponse {
+  bool success = 1;
+}
+
+message DeleteRequest {
+  string sync_pair = 1;
+  string path      = 2;
+  string node_name = 3;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message RenameRequest {
+  string sync_pair  = 1;
+  string from_path  = 2;
+  string to_path    = 3;
+  string node_name  = 4;
+}
+
+message RenameResponse {
+  bool   success = 1;
+  string error   = 2;
+}
+
+message PingRequest {
+  string node_name = 1;
+}
+
+message PingResponse {
+  string node_name = 1;
+  string status    = 2;
+}
