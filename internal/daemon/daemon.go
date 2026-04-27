@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ type Daemon struct {
 	store    *changelog.Store
 	notifier *notify.Notifier
 	dryRun   bool
+	bgWg     sync.WaitGroup // tracks background goroutines that access store
 }
 
 // New creates a Daemon from the given config.
@@ -70,11 +72,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}()
 
 	// Recovery: catchup scan for changes missed while stopped.
+	// Runs in the background so the watcher and reconciler start immediately.
 	if d.cfg.Recovery.CatchupScan {
-		rec := recovery.New(d.cfg, d.store)
-		if err := rec.CatchupScan(ctx); err != nil {
-			log.Error().Err(err).Msg("daemon: catchup scan error")
-		}
+		d.bgWg.Add(1)
+		go func() {
+			defer d.bgWg.Done()
+			rec := recovery.New(d.cfg, d.store)
+			if err := rec.CatchupScan(ctx); err != nil && ctx.Err() == nil {
+				log.Error().Err(err).Msg("daemon: catchup scan error")
+			}
+		}()
 	}
 
 	// Channel that signals the reconciler when new changelog entries arrive.
@@ -185,7 +192,11 @@ func (d *Daemon) shutdown(w *watcher.Watcher, tm *transfer.Manager) error {
 	// 3. Close transfer pool (waits for in-progress transfers).
 	tm.Close()
 
-	// 4. Close changelog DB.
+	// 4. Wait for background goroutines (e.g. catchup scan) to exit before
+	// closing the DB they may still be writing to.
+	d.bgWg.Wait()
+
+	// 5. Close changelog DB.
 	if err := d.store.Close(); err != nil {
 		log.Error().Err(err).Msg("daemon: close db failed")
 	}

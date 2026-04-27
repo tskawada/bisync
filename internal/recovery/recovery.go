@@ -86,8 +86,11 @@ func (m *Manager) scanPair(ctx context.Context, sp config.SyncPairConfig, since 
 	go func() {
 		defer close(fileCh)
 		err := filepath.WalkDir(sp.LocalPath, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || ctx.Err() != nil {
+			if err != nil {
 				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
 			}
 			if d.IsDir() {
 				return nil
