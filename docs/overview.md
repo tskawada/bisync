@@ -6,19 +6,17 @@ The two nodes are strict peers. Neither has a special role; each runs an identic
 
 ## Component overview
 
-```
-┌─────────────────────────────────────────────┐
-│                   bisync daemon              │
-│                                              │
-│  fanotify                                    │
-│  watcher ──► debouncer ──► changelog (SQLite)│
-│                                    │         │
-│                             reconciler       │
-│                            /         \       │
-│                     gRPC client    rsync/SSH  │
-│                         │                    │
-│                  gRPC server ◄── peer daemon  │
-└─────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+   subgraph daemon["bisync daemon"]
+       watcher["fanotify watcher"] --> debouncer
+       debouncer --> changelog[("changelog<br/>(SQLite)")]
+       changelog --> reconciler
+       reconciler --> grpcClient["gRPC client"]
+       reconciler --> rsync["rsync/SSH"]
+       grpcClient --> grpcServer["gRPC server"]
+   end
+   peer["peer daemon"] --> grpcServer
 ```
 
 ### Watcher
