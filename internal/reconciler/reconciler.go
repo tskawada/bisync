@@ -146,6 +146,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 					continue
 				}
 				localSyncedIDs = append(localSyncedIDs, localEntry.ID)
+				remoteSyncedIDs = append(remoteSyncedIDs, remoteEntry.ID)
 				continue
 			}
 
