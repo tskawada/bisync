@@ -21,10 +21,9 @@ const (
 
 // conflictResolver handles conflict resolution according to the configured policy.
 type conflictResolver struct {
-	cfg      *config.Config
-	store    *changelog.Store
-	nodeName string
-	notify   conflictNotifier
+	cfg    *config.Config
+	store  *changelog.Store
+	notify conflictNotifier
 }
 
 type conflictNotifier interface {
@@ -33,10 +32,9 @@ type conflictNotifier interface {
 
 func newConflictResolver(cfg *config.Config, store *changelog.Store, notify conflictNotifier) *conflictResolver {
 	return &conflictResolver{
-		cfg:      cfg,
-		store:    store,
-		nodeName: cfg.Node.Name,
-		notify:   notify,
+		cfg:    cfg,
+		store:  store,
+		notify: notify,
 	}
 }
 
