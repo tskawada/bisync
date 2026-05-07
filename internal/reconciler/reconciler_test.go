@@ -1,6 +1,7 @@
 package reconciler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/tskawada/bisync/internal/changelog"
@@ -85,7 +86,7 @@ func TestResolve_deleteVsModify(t *testing.T) {
 	local := makeEntry("albus", "d.txt", "delete", "2026-04-26T10:00:00Z:00000000")
 	remote := makeEntry("tina", "d.txt", "modify", "2026-04-26T09:00:00Z:00000000")
 
-	winner, result, err := r.resolve(nil, config.SyncPairConfig{}, local, remote)
+	winner, result, err := r.resolve(context.TODO(), config.SyncPairConfig{}, local, remote)
 	if err != nil || result != conflictResolved {
 		t.Fatalf("err=%v result=%v", err, result)
 	}
