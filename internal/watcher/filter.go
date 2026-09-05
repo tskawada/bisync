@@ -9,7 +9,7 @@ import (
 
 // Filter matches file paths against a set of glob exclude patterns.
 type Filter struct {
-	patterns []glob.Glob
+	patterns []*glob.Pattern
 }
 
 // NewFilter compiles the given glob patterns.
