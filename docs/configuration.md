@@ -21,9 +21,26 @@ peer:
   ssh_user: "root"
   ssh_key: "/root/.ssh/id_ed25519"
   grpc_port: 50051
+  grpc_listen: "100.64.0.1"          # bind address; default is every interface
+  shared_secret_file: "/etc/bisync/secret"
 ```
 
 `address` is the hostname or IP address used for both rsync/SSH and gRPC connections. `ssh_user` defaults to the `USER` environment variable, falling back to `bisync`. `ssh_key` defaults to `~/.ssh/id_ed25519`.
+
+`grpc_listen` is the address the gRPC server binds to. If it has no port, `grpc_port` is appended, so `100.64.0.1` and `100.64.0.1:50051` are equivalent. Leaving it unset binds every interface — set it to this node's tailnet address so the daemon is not reachable from the LAN.
+
+### Peer authentication
+
+`DeleteFile` and `RenameFile` modify the filesystem, and the daemon usually runs as root, so the gRPC server should not accept calls from arbitrary hosts. Configure a shared secret — the same value on both nodes — and every RPC is checked against it.
+
+The secret is never read from this config file, because config files tend to end up in version control. It comes from one of:
+
+1. the `BISYNC_SHARED_SECRET` environment variable (checked first), or
+2. `shared_secret_file`, a file containing just the secret, mode `0600`.
+
+Generate one with `openssl rand -base64 32` and copy it to both nodes. With systemd, `EnvironmentFile=/etc/bisync/secret.env` holding `BISYNC_SHARED_SECRET=...` is the usual route.
+
+If no secret is configured, authentication is disabled and the daemon logs a warning at startup when it is also bound to every interface. Roll the secret out to **both** nodes before restarting either — a node with a secret rejects a peer without one.
 
 ## sync_pairs
 

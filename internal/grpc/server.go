@@ -31,7 +31,11 @@ func NewServer(cfg *config.Config, store *changelog.Store) *Server {
 		nodeName: cfg.Node.Name,
 		status:   "ok",
 	}
-	s.grpcSrv = grpc.NewServer()
+	var opts []grpc.ServerOption
+	if secret := cfg.Peer.SharedSecret; secret != "" {
+		opts = append(opts, grpc.UnaryInterceptor(serverAuthInterceptor(secret)))
+	}
+	s.grpcSrv = grpc.NewServer(opts...)
 	RegisterBisyncServiceServer(s.grpcSrv, s)
 	return s
 }
@@ -39,12 +43,19 @@ func NewServer(cfg *config.Config, store *changelog.Store) *Server {
 // Listen starts the gRPC server on the configured port and blocks until
 // ctx is cancelled.
 func (s *Server) Listen(ctx context.Context) error {
-	addr := fmt.Sprintf(":%d", s.cfg.Peer.GRPCPort)
+	addr := s.cfg.Peer.ListenAddr()
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
-	log.Info().Str("addr", addr).Msg("gRPC server listening")
+
+	authed := s.cfg.Peer.SharedSecret != ""
+	log.Info().Str("addr", addr).Bool("authenticated", authed).Msg("gRPC server listening")
+	if !authed && s.cfg.Peer.ListensOnAllInterfaces() {
+		log.Warn().Str("addr", addr).Msg(
+			"gRPC server is listening on all interfaces with no shared secret; " +
+				"set peer.grpc_listen to the tailnet address and configure BISYNC_SHARED_SECRET")
+	}
 
 	go func() {
 		<-ctx.Done()

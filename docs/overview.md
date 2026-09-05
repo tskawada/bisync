@@ -111,7 +111,7 @@ Each daemon runs a gRPC server on port 50051 (configurable). The server exposes 
 - `RenameFile` — renames a file, rejecting if the destination already exists.
 - `Ping` — returns the node name and a status string.
 
-The gRPC server uses no TLS; it relies on the network being trusted (e.g. Tailscale).
+The gRPC server uses no TLS; it relies on the network being trusted (e.g. Tailscale). Two settings narrow the exposure that follows from that: `peer.grpc_listen` binds the server to a single address rather than every interface, and a shared secret (`BISYNC_SHARED_SECRET` or `peer.shared_secret_file`) authenticates every RPC. Both are described in [configuration.md](configuration.md#peer-authentication). Neither is a substitute for a trusted network — the transport is still plaintext — but they stop an unrelated host that can reach the port from calling `DeleteFile`.
 
 Paths in `DeleteFile` and `RenameFile` requests come from the peer and are resolved against the sync pair root, rejecting absolute paths, `..` components, and symlinked directories that point outside the tree.
 

@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -33,6 +35,37 @@ type PeerConfig struct {
 	SSHUser  string `yaml:"ssh_user"`
 	SSHKey   string `yaml:"ssh_key"`
 	GRPCPort int    `yaml:"grpc_port"`
+
+	// GRPCListen is the gRPC bind address; empty means every interface.
+	GRPCListen string `yaml:"grpc_listen"`
+
+	// SharedSecretFile holds a secret shared by both peers.
+	SharedSecretFile string `yaml:"shared_secret_file"`
+
+	// SharedSecret comes from BISYNC_SHARED_SECRET or SharedSecretFile, never
+	// from the config file itself.
+	SharedSecret string `yaml:"-"`
+}
+
+// ListenAddr returns the gRPC bind address. A bare host in grpc_listen gets
+// grpc_port appended.
+func (p PeerConfig) ListenAddr() string {
+	if p.GRPCListen == "" {
+		return fmt.Sprintf(":%d", p.GRPCPort)
+	}
+	if _, _, err := net.SplitHostPort(p.GRPCListen); err != nil {
+		return net.JoinHostPort(p.GRPCListen, strconv.Itoa(p.GRPCPort))
+	}
+	return p.GRPCListen
+}
+
+// ListensOnAllInterfaces reports whether the server binds every interface.
+func (p PeerConfig) ListensOnAllInterfaces() bool {
+	host, _, err := net.SplitHostPort(p.ListenAddr())
+	if err != nil {
+		return true
+	}
+	return host == "" || host == "0.0.0.0" || host == "::"
 }
 
 type SyncPairConfig struct {
@@ -174,6 +207,36 @@ func (c *Config) applyDefaults() error {
 			c.SyncPairs[i].DebounceSeconds = c.Watcher.DebounceSeconds
 		}
 	}
+	return c.loadSharedSecret()
+}
+
+// loadSharedSecret populates Peer.SharedSecret. The environment wins so
+// systemd can inject it via EnvironmentFile.
+func (c *Config) loadSharedSecret() error {
+	if s := strings.TrimSpace(os.Getenv("BISYNC_SHARED_SECRET")); s != "" {
+		c.Peer.SharedSecret = s
+		return nil
+	}
+	if c.Peer.SharedSecretFile == "" {
+		return nil
+	}
+	info, err := os.Stat(c.Peer.SharedSecretFile)
+	if err != nil {
+		return fmt.Errorf("read peer.shared_secret_file: %w", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("peer.shared_secret_file %q is readable by group or others (mode %#o); chmod 600 it",
+			c.Peer.SharedSecretFile, info.Mode().Perm())
+	}
+	b, err := os.ReadFile(c.Peer.SharedSecretFile)
+	if err != nil {
+		return fmt.Errorf("read peer.shared_secret_file: %w", err)
+	}
+	secret := strings.TrimSpace(string(b))
+	if secret == "" {
+		return fmt.Errorf("peer.shared_secret_file %q is empty", c.Peer.SharedSecretFile)
+	}
+	c.Peer.SharedSecret = secret
 	return nil
 }
 

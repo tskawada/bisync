@@ -106,7 +106,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// gRPC peer client.
 	peerAddr := fmt.Sprintf("%s:%d", d.cfg.Peer.Address, d.cfg.Peer.GRPCPort)
-	client, err := bisyncgrpc.NewClient(peerAddr)
+	client, err := bisyncgrpc.NewClient(peerAddr, d.cfg.Peer.SharedSecret)
 	if err != nil {
 		return fmt.Errorf("create grpc client: %w", err)
 	}

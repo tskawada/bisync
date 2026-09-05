@@ -22,11 +22,16 @@ type Client struct {
 	addr   string
 }
 
-// NewClient dials the peer at addr and returns a Client.
-func NewClient(addr string) (*Client, error) {
-	conn, err := grpc.NewClient(addr,
+// NewClient dials the peer at addr and returns a Client. secret must match the
+// peer's own configuration; empty disables authentication.
+func NewClient(addr, secret string) (*Client, error) {
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	}
+	if secret != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(clientAuthInterceptor(secret)))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", addr, err)
 	}
@@ -122,13 +127,13 @@ func (c *bisyncServiceClientImpl) Ping(ctx context.Context, req *PingRequest, op
 }
 
 // DialWithRetry dials, retrying up to maxRetries times on failure.
-func DialWithRetry(ctx context.Context, addr string) (*Client, error) {
+func DialWithRetry(ctx context.Context, addr, secret string) (*Client, error) {
 	var (
 		client *Client
 		err    error
 	)
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewClient(addr)
+		client, err = NewClient(addr, secret)
 		if err == nil {
 			return client, nil
 		}
