@@ -106,14 +106,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// gRPC peer client.
 	peerAddr := fmt.Sprintf("%s:%d", d.cfg.Peer.Address, d.cfg.Peer.GRPCPort)
-	client, err := bisyncgrpc.NewClient(peerAddr, d.cfg.Peer.SharedSecret)
+	client, err := bisyncgrpc.NewClient(peerAddr, d.cfg.Peer)
 	if err != nil {
 		return fmt.Errorf("create grpc client: %w", err)
 	}
 	defer client.Close()
 
 	// gRPC server (serves peer requests).
-	grpcSrv := bisyncgrpc.NewServer(d.cfg, d.store)
+	grpcSrv, err := bisyncgrpc.NewServer(d.cfg, d.store)
+	if err != nil {
+		return fmt.Errorf("create grpc server: %w", err)
+	}
 
 	// Reconciler.
 	rec := reconciler.New(d.cfg, d.store, client, transferMgr, d.notifier)

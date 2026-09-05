@@ -42,6 +42,34 @@ Generate one with `openssl rand -base64 32` and copy it to both nodes. With syst
 
 If no secret is configured, authentication is disabled and the daemon logs a warning at startup when it is also bound to every interface. Roll the secret out to **both** nodes before restarting either — a node with a secret rejects a peer without one.
 
+### TLS
+
+The gRPC connection is plaintext unless `peer.tls` is configured, in which case both ends do mutual TLS (TLS 1.3, client certificate required):
+
+```yaml
+peer:
+  tls:
+    cert_file: "/etc/bisync/tls/albus.crt"
+    key_file:  "/etc/bisync/tls/albus.key"   # must be mode 0600
+    ca_file:   "/etc/bisync/tls/ca.crt"
+    server_name: ""                          # defaults to peer.name
+```
+
+All three files are set together; setting only some of them is a config error rather than a silent fallback to plaintext. `server_name` is the name the client requires in the peer's certificate, so each node's certificate needs a SAN matching the *other* node's `peer.name`.
+
+Over Tailscale this is largely redundant — WireGuard already encrypts and authenticates the path — so it is worth the certificate management only if the traffic can traverse a network you do not trust. A self-signed CA with one long-lived certificate per node is enough for two peers:
+
+```sh
+openssl req -x509 -newkey ed25519 -days 3650 -nodes   -keyout ca.key -out ca.crt -subj "/CN=bisync-ca"
+
+for node in albus tina; do
+  openssl req -newkey ed25519 -nodes -keyout "$node.key" -out "$node.csr"     -subj "/CN=$node"
+  openssl x509 -req -in "$node.csr" -CA ca.crt -CAkey ca.key -CAcreateserial     -days 3650 -out "$node.crt"     -extfile <(printf "subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth,clientAuth" "$node")
+done
+```
+
+Copy `ca.crt` to both nodes along with each node's own `.crt`/`.key`, and `chmod 600` the keys.
+
 ## sync_pairs
 
 ```yaml

@@ -216,3 +216,65 @@ func TestLoadSharedSecret_notSettableFromYAML(t *testing.T) {
 		t.Errorf("shared_secret must be ignored in YAML, got %q", cfg.Peer.SharedSecret)
 	}
 }
+
+// --- peer TLS ---
+
+// validTestConfig returns a config that passes validate(), so a test can change
+// one field and check that field alone.
+func validTestConfig(t *testing.T) *Config {
+	t.Helper()
+	cfg := defaults()
+	cfg.Node.Name = "albus"
+	cfg.Peer.Name = "tina"
+	cfg.Peer.Address = "tina"
+	cfg.Conflict.Policy = "lww"
+	cfg.SyncPairs = []SyncPairConfig{{Name: "media", LocalPath: t.TempDir()}}
+	return cfg
+}
+
+func TestValidate_rejectsPartialTLSConfig(t *testing.T) {
+	cfg := validTestConfig(t)
+	cfg.Peer.TLS = TLSConfig{CertFile: "/etc/bisync/node.crt"}
+
+	if err := cfg.validate(); err == nil {
+		t.Error("expected a half-filled peer.tls block to be rejected")
+	}
+}
+
+func TestTLSConfig_Enabled(t *testing.T) {
+	full := TLSConfig{CertFile: "a", KeyFile: "b", CAFile: "c"}
+	if !full.Enabled() {
+		t.Error("a complete TLS block should be enabled")
+	}
+	if (TLSConfig{}).Enabled() {
+		t.Error("an empty TLS block should be disabled")
+	}
+	if (TLSConfig{CertFile: "a", KeyFile: "b"}).Enabled() {
+		t.Error("a block missing the CA should not be enabled")
+	}
+}
+
+func TestValidate_rejectsWorldReadableTLSKey(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "node.key")
+	if err := os.WriteFile(key, []byte("key"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := validTestConfig(t)
+	cfg.Peer.TLS = TLSConfig{CertFile: "c", KeyFile: key, CAFile: "ca"}
+
+	if err := cfg.validate(); err == nil {
+		t.Error("expected a world-readable TLS key to be rejected")
+	}
+}
+
+func TestApplyDefaults_serverNameFallsBackToPeerName(t *testing.T) {
+	cfg := &Config{Peer: PeerConfig{Name: "tina"}}
+	if err := cfg.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Peer.TLS.ServerName != "tina" {
+		t.Errorf("got %q, want %q", cfg.Peer.TLS.ServerName, "tina")
+	}
+}

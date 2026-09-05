@@ -24,7 +24,7 @@ type Server struct {
 }
 
 // NewServer creates a new gRPC server.
-func NewServer(cfg *config.Config, store *changelog.Store) *Server {
+func NewServer(cfg *config.Config, store *changelog.Store) (*Server, error) {
 	s := &Server{
 		cfg:      cfg,
 		store:    store,
@@ -35,9 +35,16 @@ func NewServer(cfg *config.Config, store *changelog.Store) *Server {
 	if secret := cfg.Peer.SharedSecret; secret != "" {
 		opts = append(opts, grpc.UnaryInterceptor(serverAuthInterceptor(secret)))
 	}
+	if cfg.Peer.TLS.Enabled() {
+		creds, err := serverTLSCredentials(cfg.Peer.TLS)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, grpc.Creds(creds))
+	}
 	s.grpcSrv = grpc.NewServer(opts...)
 	RegisterBisyncServiceServer(s.grpcSrv, s)
-	return s
+	return s, nil
 }
 
 // Listen starts the gRPC server on the configured port and blocks until
@@ -49,8 +56,11 @@ func (s *Server) Listen(ctx context.Context) error {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 
-	authed := s.cfg.Peer.SharedSecret != ""
-	log.Info().Str("addr", addr).Bool("authenticated", authed).Msg("gRPC server listening")
+	authed := s.cfg.Peer.SharedSecret != "" || s.cfg.Peer.TLS.Enabled()
+	log.Info().Str("addr", addr).
+		Bool("authenticated", authed).
+		Bool("tls", s.cfg.Peer.TLS.Enabled()).
+		Msg("gRPC server listening")
 	if !authed && s.cfg.Peer.ListensOnAllInterfaces() {
 		log.Warn().Str("addr", addr).Msg(
 			"gRPC server is listening on all interfaces with no shared secret; " +

@@ -45,6 +45,36 @@ type PeerConfig struct {
 	// SharedSecret comes from BISYNC_SHARED_SECRET or SharedSecretFile, never
 	// from the config file itself.
 	SharedSecret string `yaml:"-"`
+
+	TLS TLSConfig `yaml:"tls"`
+}
+
+// TLSConfig configures mutual TLS for the peer gRPC connection. The three
+// files are set together or not at all.
+type TLSConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
+
+	// ServerName is expected in the peer's certificate; defaults to peer.name.
+	ServerName string `yaml:"server_name"`
+}
+
+// Enabled reports whether mutual TLS is configured.
+func (t TLSConfig) Enabled() bool {
+	return t.CertFile != "" && t.KeyFile != "" && t.CAFile != ""
+}
+
+// partiallySet catches a half-filled TLS block, which would otherwise fall
+// back to a plaintext connection silently.
+func (t TLSConfig) partiallySet() bool {
+	set := 0
+	for _, f := range []string{t.CertFile, t.KeyFile, t.CAFile} {
+		if f != "" {
+			set++
+		}
+	}
+	return set != 0 && set != 3
 }
 
 // ListenAddr returns the gRPC bind address. A bare host in grpc_listen gets
@@ -207,6 +237,9 @@ func (c *Config) applyDefaults() error {
 			c.SyncPairs[i].DebounceSeconds = c.Watcher.DebounceSeconds
 		}
 	}
+	if c.Peer.TLS.ServerName == "" {
+		c.Peer.TLS.ServerName = c.Peer.Name
+	}
 	return c.loadSharedSecret()
 }
 
@@ -220,13 +253,8 @@ func (c *Config) loadSharedSecret() error {
 	if c.Peer.SharedSecretFile == "" {
 		return nil
 	}
-	info, err := os.Stat(c.Peer.SharedSecretFile)
-	if err != nil {
-		return fmt.Errorf("read peer.shared_secret_file: %w", err)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("peer.shared_secret_file %q is readable by group or others (mode %#o); chmod 600 it",
-			c.Peer.SharedSecretFile, info.Mode().Perm())
+	if err := checkPrivateFile(c.Peer.SharedSecretFile); err != nil {
+		return fmt.Errorf("peer.shared_secret_file: %w", err)
 	}
 	b, err := os.ReadFile(c.Peer.SharedSecretFile)
 	if err != nil {
@@ -237,6 +265,19 @@ func (c *Config) loadSharedSecret() error {
 		return fmt.Errorf("peer.shared_secret_file %q is empty", c.Peer.SharedSecretFile)
 	}
 	c.Peer.SharedSecret = secret
+	return nil
+}
+
+// checkPrivateFile rejects a secret-bearing file that group or others can read.
+func checkPrivateFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%q is readable by group or others (mode %#o); chmod 600 it",
+			path, info.Mode().Perm())
+	}
 	return nil
 }
 
@@ -275,6 +316,14 @@ func (c *Config) validate() error {
 	}
 	if !validConflictPolicies[c.Conflict.Policy] {
 		return fmt.Errorf("conflict.policy must be one of: lww, alpha_wins, keep_both, manual")
+	}
+	if c.Peer.TLS.partiallySet() {
+		return fmt.Errorf("peer.tls needs cert_file, key_file and ca_file together (or none at all)")
+	}
+	if c.Peer.TLS.Enabled() {
+		if err := checkPrivateFile(c.Peer.TLS.KeyFile); err != nil {
+			return fmt.Errorf("peer.tls.key_file: %w", err)
+		}
 	}
 	for i, h := range c.Notify.Handlers {
 		if h.Type != "webhook" && h.Type != "command" {

@@ -92,7 +92,7 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 			addr := fmt.Sprintf("%s:%d", cfg.Peer.Address, cfg.Peer.GRPCPort)
-			client, err := bisyncgrpc.NewClient(addr, cfg.Peer.SharedSecret)
+			client, err := bisyncgrpc.NewClient(addr, cfg.Peer)
 			if err != nil {
 				return fmt.Errorf("connect to peer: %w", err)
 			}

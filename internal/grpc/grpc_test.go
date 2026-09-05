@@ -30,7 +30,10 @@ func startTestServer(t *testing.T) (*Client, *Server) {
 		Peer: config.PeerConfig{Name: "tina", GRPCPort: 0},
 	}
 
-	srv := NewServer(cfg, store)
+	srv, err := NewServer(cfg, store)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tskawada/bisync/internal/config"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
@@ -22,15 +24,25 @@ type Client struct {
 	addr   string
 }
 
-// NewClient dials the peer at addr and returns a Client. secret must match the
-// peer's own configuration; empty disables authentication.
-func NewClient(addr, secret string) (*Client, error) {
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+// NewClient dials the peer at addr and returns a Client. The peer's own
+// config must match the credentials given here.
+func NewClient(addr string, peer config.PeerConfig) (*Client, error) {
+	var opts []grpc.DialOption
+
+	if peer.TLS.Enabled() {
+		creds, err := clientTLSCredentials(peer.TLS, peer.TLS.ServerName)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
-	if secret != "" {
-		opts = append(opts, grpc.WithUnaryInterceptor(clientAuthInterceptor(secret)))
+
+	if peer.SharedSecret != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(clientAuthInterceptor(peer.SharedSecret)))
 	}
+
 	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %q: %w", addr, err)
@@ -127,13 +139,13 @@ func (c *bisyncServiceClientImpl) Ping(ctx context.Context, req *PingRequest, op
 }
 
 // DialWithRetry dials, retrying up to maxRetries times on failure.
-func DialWithRetry(ctx context.Context, addr, secret string) (*Client, error) {
+func DialWithRetry(ctx context.Context, addr string, peer config.PeerConfig) (*Client, error) {
 	var (
 		client *Client
 		err    error
 	)
 	for i := 0; i < maxRetries; i++ {
-		client, err = NewClient(addr, secret)
+		client, err = NewClient(addr, peer)
 		if err == nil {
 			return client, nil
 		}

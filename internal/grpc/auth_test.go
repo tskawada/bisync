@@ -30,7 +30,10 @@ func startAuthTestServer(t *testing.T, serverSecret, clientSecret string) *Clien
 		Peer: config.PeerConfig{Name: "tina", GRPCPort: 0, SharedSecret: serverSecret},
 	}
 
-	srv := NewServer(cfg, store)
+	srv, err := NewServer(cfg, store)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
