@@ -113,6 +113,8 @@ Each daemon runs a gRPC server on port 50051 (configurable). The server exposes 
 
 The gRPC server uses no TLS; it relies on the network being trusted (e.g. Tailscale).
 
+Paths in `DeleteFile` and `RenameFile` requests come from the peer and are resolved against the sync pair root, rejecting absolute paths, `..` components, and symlinked directories that point outside the tree.
+
 ### Recovery
 
 When the daemon shuts down gracefully, it writes the current timestamp to the `last_shutdown` key in the changelog metadata table. On the next start, the recovery manager walks each sync pair directory and records a `modify` entry for every file whose mtime is newer than `last_shutdown`. This catches changes that occurred while the daemon was not running.

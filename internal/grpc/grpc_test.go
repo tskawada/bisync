@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,5 +320,164 @@ func TestJSONCodec_name(t *testing.T) {
 	c := jsonCodec{}
 	if c.Name() != "proto" {
 		t.Error("codec name must be 'proto' to override gRPC default codec")
+	}
+}
+
+// --- path containment ---
+
+func TestResolveInPair_rejectsEscapes(t *testing.T) {
+	base := t.TempDir()
+
+	for _, rel := range []string{
+		"../outside.txt",
+		"../../etc/passwd",
+		"sub/../../outside.txt",
+		"/etc/passwd",
+		".",
+		"",
+	} {
+		if got, err := resolveInPair(base, rel); err == nil {
+			t.Errorf("resolveInPair(%q) should have been rejected, got %q", rel, got)
+		}
+	}
+}
+
+func TestResolveInPair_acceptsPathsInsidePair(t *testing.T) {
+	base := t.TempDir()
+
+	for _, rel := range []string{"a.txt", "sub/a.txt", "./a.txt"} {
+		got, err := resolveInPair(base, rel)
+		if err != nil {
+			t.Errorf("resolveInPair(%q) unexpectedly rejected: %v", rel, err)
+			continue
+		}
+		if !strings.HasPrefix(got, base+string(os.PathSeparator)) {
+			t.Errorf("resolveInPair(%q) = %q, outside base %q", rel, got, base)
+		}
+	}
+}
+
+func TestResolveInPair_rejectsSymlinkedDirEscape(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "pair")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{base, outside} {
+		if err := os.Mkdir(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := resolveInPair(base, "link/secret.txt"); err == nil {
+		t.Errorf("traversal through symlinked dir should be rejected, got %q", got)
+	}
+}
+
+func TestDeleteFile_rejectsPathTraversal(t *testing.T) {
+	client, srv := startTestServer(t)
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "pair")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.SyncPairs = []config.SyncPairConfig{
+		{Name: "media", LocalPath: dir, RemotePath: "/remote"},
+	}
+
+	victim := filepath.Join(root, "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not delete"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.DeleteFile(context.Background(), &DeleteRequest{
+		SyncPair: "media", Path: "../victim.txt", NodeName: "tina",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Error("expected traversing delete to be rejected")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("file outside the sync pair was deleted: %v", err)
+	}
+}
+
+func TestRenameFile_rejectsPathTraversal(t *testing.T) {
+	client, srv := startTestServer(t)
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "pair")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.SyncPairs = []config.SyncPairConfig{
+		{Name: "media", LocalPath: dir, RemotePath: "/remote"},
+	}
+	if err := os.WriteFile(filepath.Join(dir, "payload.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Escaping target: would plant a file outside the sync pair.
+	resp, err := client.RenameFile(context.Background(), &RenameRequest{
+		SyncPair: "media", FromPath: "payload.txt", ToPath: "../planted.txt", NodeName: "tina",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Error("expected traversing rename target to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(root, "planted.txt")); err == nil {
+		t.Error("file was planted outside the sync pair")
+	}
+
+	// Escaping source.
+	resp, err = client.RenameFile(context.Background(), &RenameRequest{
+		SyncPair: "media", FromPath: "../../etc/hostname", ToPath: "stolen.txt", NodeName: "tina",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Success {
+		t.Error("expected traversing rename source to be rejected")
+	}
+}
+
+func TestResolveInPair_rejectsSymlinkEscapeUnderMissingParent(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "pair")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{base, outside} {
+		if err := os.Mkdir(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	// "link/new" does not exist yet; RenameFile would MkdirAll it, landing
+	// outside the pair. The deepest existing ancestor is the symlink itself.
+	if got, err := resolveInPair(base, "link/new/planted.txt"); err == nil {
+		t.Errorf("escape through symlink under missing parent should be rejected, got %q", got)
+	}
+}
+
+func TestResolveInPair_allowsMissingNestedPath(t *testing.T) {
+	base := t.TempDir()
+
+	got, err := resolveInPair(base, "does/not/exist/yet.txt")
+	if err != nil {
+		t.Fatalf("nested path inside the pair should be allowed: %v", err)
+	}
+	if !strings.HasPrefix(got, base+string(os.PathSeparator)) {
+		t.Errorf("got %q, outside base %q", got, base)
 	}
 }

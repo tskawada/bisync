@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tskawada/bisync/internal/changelog"
@@ -102,7 +103,12 @@ func (s *Server) DeleteFile(ctx context.Context, req *DeleteRequest) (*DeleteRes
 		return &DeleteResponse{Success: false, Error: "local unsynced changes exist"}, nil
 	}
 
-	fullPath := filepath.Join(sp.LocalPath, req.Path)
+	fullPath, err := resolveInPair(sp.LocalPath, req.Path)
+	if err != nil {
+		log.Warn().Str("pair", req.SyncPair).Str("path", req.Path).Str("peer", req.NodeName).
+			Err(err).Msg("DeleteFile: rejected path")
+		return &DeleteResponse{Success: false, Error: err.Error()}, nil
+	}
 	if err := os.RemoveAll(fullPath); err != nil && !os.IsNotExist(err) {
 		return &DeleteResponse{Success: false, Error: err.Error()}, nil
 	}
@@ -116,8 +122,18 @@ func (s *Server) RenameFile(ctx context.Context, req *RenameRequest) (*RenameRes
 		return &RenameResponse{Success: false, Error: "unknown sync pair"}, nil
 	}
 
-	from := filepath.Join(sp.LocalPath, req.FromPath)
-	to := filepath.Join(sp.LocalPath, req.ToPath)
+	from, err := resolveInPair(sp.LocalPath, req.FromPath)
+	if err != nil {
+		log.Warn().Str("pair", req.SyncPair).Str("path", req.FromPath).Str("peer", req.NodeName).
+			Err(err).Msg("RenameFile: rejected source path")
+		return &RenameResponse{Success: false, Error: err.Error()}, nil
+	}
+	to, err := resolveInPair(sp.LocalPath, req.ToPath)
+	if err != nil {
+		log.Warn().Str("pair", req.SyncPair).Str("path", req.ToPath).Str("peer", req.NodeName).
+			Err(err).Msg("RenameFile: rejected target path")
+		return &RenameResponse{Success: false, Error: err.Error()}, nil
+	}
 
 	if err := os.MkdirAll(filepath.Dir(to), 0755); err != nil {
 		return &RenameResponse{Success: false, Error: err.Error()}, nil
@@ -137,6 +153,56 @@ func (s *Server) RenameFile(ctx context.Context, req *RenameRequest) (*RenameRes
 // Ping responds with node name and current sync status.
 func (s *Server) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
 	return &PingResponse{NodeName: s.nodeName, Status: s.status}, nil
+}
+
+// resolveInPair resolves a peer-supplied relative path against a sync pair's
+// local root and rejects anything that escapes it. filepath.Join alone is not
+// enough: it cleans the result, so Join("/srv/data", "../../etc/x") yields
+// "/etc/x".
+func resolveInPair(localPath, rel string) (string, error) {
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path must be relative")
+	}
+	// Rejected explicitly rather than left to the prefix check below.
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path must not contain %q", "..")
+		}
+	}
+	if c := filepath.Clean(rel); c == "." || c == string(os.PathSeparator) {
+		return "", fmt.Errorf("path must not be the sync pair root")
+	}
+
+	base := filepath.Clean(localPath)
+	full := filepath.Join(base, rel)
+	if !strings.HasPrefix(full, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes sync pair root")
+	}
+
+	// A symlinked directory inside the tree can still point outside it. Walk up
+	// to the deepest existing ancestor, since RenameFile's MkdirAll would
+	// follow a link under a parent that does not yet exist.
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", fmt.Errorf("resolve sync pair root: %w", err)
+	}
+	for ancestor := filepath.Dir(full); ; {
+		resolved, err := filepath.EvalSymlinks(ancestor)
+		if err == nil {
+			if resolved != realBase && !strings.HasPrefix(resolved, realBase+string(os.PathSeparator)) {
+				return "", fmt.Errorf("path escapes sync pair root via symlink")
+			}
+			return full, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("resolve %q: %w", ancestor, err)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", fmt.Errorf("no existing ancestor under sync pair root")
+		}
+		ancestor = parent
+	}
 }
 
 func entryToProto(e *changelog.Entry) *ChangelogEntry {
